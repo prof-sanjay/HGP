@@ -194,7 +194,7 @@ def rules_sheet(wb):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    ap.add_argument("--results", default="results")
+    ap.add_argument("--results", default=str(Path(__file__).resolve().parents[1] / "results"), help="default: <repo>/results")
     ap.add_argument("--out", default=None, help="workbook path (default: <results>/Comparison horizon.xlsx)")
     ap.add_argument("--final-tags", nargs="*", default=[], help="tags whose test metrics go to the 'Final test' sheet")
     ap.add_argument("--include-smoke", action="store_true")
