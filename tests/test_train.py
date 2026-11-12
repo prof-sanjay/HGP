@@ -1,0 +1,59 @@
+"""End-to-end check of the scripts on a small synthetic dataset: prepared file -> graphs -> training -> summary."""
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[1]
+PY = sys.executable
+
+
+def make_dataset(path: Path, n=12, days=20, seed=0):
+    rng = np.random.default_rng(seed)
+    T = days * 288
+    road = np.zeros((n, n), dtype=np.float32)
+    for i in range(n - 1):
+        road[i, i + 1] = road[i + 1, i] = 1.0
+    daily = 50 + 40 * np.sin(2 * np.pi * np.arange(T) / 288)[:, None]
+    flow = daily + rng.standard_normal((T, n)) * 5
+    for t in range(3, T):
+        flow[t, 1:] += 0.3 * (flow[t - 3, :-1] - daily[t - 3, 0])
+    flow = flow.astype(np.float32)
+    flow[rng.random((T, n)) < 0.01] = np.nan
+    inputs = np.where(np.isfinite(flow), flow, np.nanmean(flow, 0)).astype(np.float32)
+    timestamps = 1_609_459_200_000_000_000 + np.arange(T, dtype=np.int64) * 300_000_000_000
+    np.savez_compressed(path, flow=flow, inputs=inputs, timestamps=timestamps, sensors=np.arange(n), road=road)
+
+
+def run(*args):
+    proc = subprocess.run([PY, "-W", "ignore", *args], cwd=ROOT, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-2000:]
+    return proc.stdout
+
+
+def test_pipeline_end_to_end(tmp_path):
+    data = tmp_path / "toy.npz"
+    make_dataset(data)
+    out = run("scripts/build_graphs.py", "--data", str(data), "--horizons", "3", "6", "12", "--out", str(tmp_path / "graphs"))
+    for h in (3, 6, 12):
+        assert (tmp_path / "graphs" / f"G_h{h}.npz").exists() and (tmp_path / "graphs" / f"VAR_h{h}.npz").exists()
+    info = json.loads((tmp_path / "graphs" / "G_h3.json").read_text())
+    assert info["edges"] == info["var_supported"] + info["added"]
+
+    for config in ("family", "g12_all", "none"):
+        for seed in (1, 2):
+            run("scripts/train.py", "--config", config, "--seed", str(seed), "--data", str(data), "--graphs", str(tmp_path / "graphs"),
+                "--results", str(tmp_path / "results"), "--epochs", "2", "--batch-size", "32")
+    results = json.loads((tmp_path / "results" / "family__seed1" / "results.json").read_text())
+    assert set(results["test"]) >= {"3", "6", "12", "mean"} and results["best_epoch"] >= 1
+    none = json.loads((tmp_path / "results" / "none_nograph__seed1" / "results.json").read_text())
+    assert none["parameters"] == results["parameters"] and all(v == 0 for v in none["test_gate"].values())
+    for h in (3, 6, 12):
+        z = np.load(tmp_path / "results" / "family__seed1" / f"test_predictions_h{h}.npz")
+        assert not np.isnan(z["targets"]).any() and z["targets"].shape == z["predictions"].shape
+
+    summary = run("scripts/summarise.py", "--results", str(tmp_path / "results"))
+    assert "family" in summary and "paired RMSE ratio family / g12_all" in summary and "seed 1:" in summary
