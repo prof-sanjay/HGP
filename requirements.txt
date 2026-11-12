@@ -6,3 +6,4 @@ h5py>=3.8
 pandas>=2.0
 tables>=3.8
 pytest>=7
+openpyxl>=3.1
