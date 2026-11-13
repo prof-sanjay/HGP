@@ -26,6 +26,10 @@ def evaluate(y_true: np.ndarray, y_pred: np.ndarray, mape_min_flow: float = 10.0
 def horizon_metrics(targets: dict, predictions: dict, mape_min_flow: float = 10.0) -> dict:
     out = {int(h): evaluate(targets[h], predictions[h], mape_min_flow) for h in sorted(targets)}
     hs = sorted(out)
-    out["mean"] = {k: float(np.mean([out[h][k] for h in hs])) for k in ("mae", "rmse", "mape")}
-    out["error_growth_rmse"] = out[hs[-1]]["rmse"] / out[hs[0]]["rmse"]
+    main = [h for h in hs if h in (3, 6, 12)] or hs      # "mean" stays the mean over 15 / 30 / 60 min, also when h=1 is added
+    out["mean"] = {k: float(np.mean([out[h][k] for h in main])) for k in ("mae", "rmse", "mape")}
+    if main != hs:
+        out["mean_all"] = {k: float(np.mean([out[h][k] for h in hs])) for k in ("mae", "rmse", "mape")}
+    first = 3 if 3 in hs else hs[0]       # h12 / h3 whenever h=3 is present, so adding h=1 keeps the definition
+    out["error_growth_rmse"] = out[hs[-1]]["rmse"] / out[first]["rmse"]
     return out

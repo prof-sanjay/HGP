@@ -57,3 +57,21 @@ def test_pipeline_end_to_end(tmp_path):
 
     summary = run("scripts/summarise.py", "--results", str(tmp_path / "results"))
     assert "family" in summary and "paired RMSE ratio family / g12_all" in summary and "seed 1:" in summary
+
+
+def test_five_minute_horizon(tmp_path):
+    """Adding h=1: graphs, an extra branch and head, per-horizon results, and 'mean' still the mean over 15/30/60 min."""
+    data = tmp_path / "toy.npz"
+    make_dataset(data)
+    run("scripts/build_graphs.py", "--data", str(data), "--horizons", "1", "3", "6", "12", "--out", str(tmp_path / "graphs"))
+    assert (tmp_path / "graphs" / "G_h1.npz").exists()
+    run("scripts/train.py", "--config", "family", "--seed", "1", "--data", str(data), "--graphs", str(tmp_path / "graphs"),
+        "--results", str(tmp_path / "results"), "--epochs", "2", "--batch-size", "32", "--horizons", "1", "3", "6", "12")
+    r = json.loads((tmp_path / "results" / "family__seed1" / "results.json").read_text())
+    assert set(r["test"]) >= {"1", "3", "6", "12", "mean", "mean_all"}
+    for metric in ("mae", "rmse"):
+        main = np.mean([r["test"][h][metric] for h in ("3", "6", "12")])
+        every = np.mean([r["test"][h][metric] for h in ("1", "3", "6", "12")])
+        assert abs(r["test"]["mean"][metric] - main) < 1e-9 and abs(r["test"]["mean_all"][metric] - every) < 1e-9
+    assert abs(r["test"]["error_growth_rmse"] - r["test"]["12"]["rmse"] / r["test"]["3"]["rmse"]) < 1e-9
+    assert (tmp_path / "results" / "family__seed1" / "test_predictions_h1.npz").exists()

@@ -25,6 +25,7 @@ def main():
     ap.add_argument("--config", default="family", choices=["family", "g12_all", "g3_all", "shuffled", "road", "road_power", "none"])
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--data", default=DataConfig.path)
+    ap.add_argument("--horizons", type=int, nargs="+", default=list(DataConfig.horizons), help="steps ahead; 1 adds the 5-minute horizon")
     ap.add_argument("--graphs", default="graphs")
     ap.add_argument("--results", default="results")
     ap.add_argument("--epochs", type=int, default=TrainConfig.epochs)
@@ -38,6 +39,7 @@ def main():
     args = ap.parse_args()
 
     dc = DataConfig.from_file(args.data)
+    dc.horizons = tuple(args.horizons)
     tc = TrainConfig(graph_config=args.config, seed=args.seed, epochs=args.epochs, batch_size=args.batch_size, results_dir=args.results,
                      model=ModelConfig(hidden=args.hidden, dropout=args.dropout, use_gate=not args.no_gate, use_graph=args.config != "none", two_hop=args.two_hop))
     data = load(dc)

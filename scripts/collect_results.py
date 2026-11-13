@@ -21,7 +21,8 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 HORIZONS = ("3", "6", "12")
-MINUTES = {"3": 15, "6": 30, "12": 60}
+MINUTES = {"1": 5, "3": 15, "6": 30, "12": 60}
+ALL_HORIZONS = ("1", "3", "6", "12")      # "1" (5 min) exists only for runs trained with horizon 1
 OWN_SHEETS = ("Tuning (validation)", "Final test", "Comparison", "Rules")
 
 HEAD_FILL = PatternFill("solid", fgColor="DDE6F0")
@@ -45,28 +46,57 @@ def graph_settings(tag_dir):
     return {}, {}
 
 
+def signature(run):
+    """What makes two runs the same run: setting, seed, graph and validation result."""
+    v = run["validation"]["mean"]
+    return (run["config"], run["seed"], run["hidden"], run["dropout"], run["params"],
+            tuple(sorted(run["edges"].items())), round(v["mae"], 6), round(v["rmse"], 6))
+
+
 def collect(results_dir, include_smoke):
-    runs = []
-    for path in sorted(Path(results_dir).glob("*/*/results.json")):
+    """All runs under results_dir at any depth. Exact duplicates (the same run pasted under several folder names) are
+    reported and dropped, keeping the folder whose tag mentions the run's hidden size, else the shortest path."""
+    runs, graph_cfgs = [], {}
+    for path in sorted(Path(results_dir).glob("**/results.json")):
         tag_dir = path.parents[1]
         tag = tag_dir.name[len("results_"):] if tag_dir.name.startswith("results_") else tag_dir.name
         if tag == "smoke" and not include_smoke:
             continue
         result = read_json(path)
         config_file = path.parent / "config.json"
-        train = read_json(config_file).get("train", {}) if config_file.exists() else {}
+        config = read_json(config_file) if config_file.exists() else {}
+        train = config.get("train", {})
         model = train.get("model", {})
         graph_cfg, edges = graph_settings(tag_dir)
+        if not edges:
+            edges = {h: v.get("edges") for h, v in config.get("graphs", {}).items()}
+        if graph_cfg:
+            graph_cfgs[tuple(sorted(edges.items()))] = graph_cfg
         uses_graph = model.get("use_graph", True)
         runs.append(dict(
-            tag=tag, config=train.get("graph_config", result["run"].split("__")[0]), seed=train.get("seed"),
-            graph_cfg=graph_cfg if uses_graph else {}, edges=edges if uses_graph else {},
+            tag=tag, folder=str(path.parent), config=train.get("graph_config", result["run"].split("__")[0]), seed=train.get("seed"),
+            graph_cfg=graph_cfg if uses_graph else {}, edges=edges if uses_graph else {}, inferred=False,
             hidden=model.get("hidden"), dropout=model.get("dropout"), params=result.get("parameters"),
             best_epoch=result.get("best_epoch"), epochs=result.get("epochs"),
             minutes=result.get("training_seconds", 0) / 60,
             validation=result["validation"], test=result["test"], gate=result.get("test_gate", {}),
         ))
-    return runs
+    for r in runs:
+        if r["edges"] and not r["graph_cfg"]:
+            match = graph_cfgs.get(tuple(sorted(r["edges"].items())))
+            if match:
+                r["graph_cfg"], r["inferred"] = match, True
+
+    groups = {}
+    for r in runs:
+        groups.setdefault(signature(r), []).append(r)
+    kept = []
+    for same in groups.values():
+        same.sort(key=lambda r: (str(r["hidden"]) not in r["tag"], len(r["folder"])))
+        kept.append(same[0])
+        for dup in same[1:]:
+            print(f"duplicate dropped: {dup['folder']}  (same run as {same[0]['folder']})")
+    return kept
 
 
 def style_header(ws, ncols):
@@ -87,8 +117,8 @@ def tuning_sheet(wb, runs):
     heads = ["Tag", "Config", "Seed",
              "FDR q", "Group corr", "VAR ridge", "Max sources", "VAR lag", "Hidden", "Dropout",
              "Edges h=3", "Edges h=6", "Edges h=12",
-             "Val MAE mean", "Val MAE 15 min", "Val MAE 30 min", "Val MAE 60 min",
-             "Val RMSE mean", "Val RMSE 15 min", "Val RMSE 30 min", "Val RMSE 60 min",
+             "Val MAE mean", "Val MAE 5 min", "Val MAE 15 min", "Val MAE 30 min", "Val MAE 60 min",
+             "Val RMSE mean", "Val RMSE 5 min", "Val RMSE 15 min", "Val RMSE 30 min", "Val RMSE 60 min",
              VS_BASE, "Best epoch", "Epochs run", "Minutes", "Parameters", "Notes"]
     ws.append(heads)
     style_header(ws, len(heads))
@@ -104,9 +134,10 @@ def tuning_sheet(wb, runs):
                    g.get("fdr"), g.get("group_corr"), g.get("var_ridge"), g.get("max_sources"), g.get("var_lag"),
                    r["hidden"], r["dropout"],
                    r["edges"].get("3"), r["edges"].get("6"), r["edges"].get("12"),
-                   v["mean"]["mae"], v["3"]["mae"], v["6"]["mae"], v["12"]["mae"],
-                   v["mean"]["rmse"], v["3"]["rmse"], v["6"]["rmse"], v["12"]["rmse"],
-                   None, r["best_epoch"], r["epochs"], round(r["minutes"], 1), r["params"], None])
+                   v["mean"]["mae"], v.get("1", {}).get("mae"), v["3"]["mae"], v["6"]["mae"], v["12"]["mae"],
+                   v["mean"]["rmse"], v.get("1", {}).get("rmse"), v["3"]["rmse"], v["6"]["rmse"], v["12"]["rmse"],
+                   None, r["best_epoch"], r["epochs"], round(r["minutes"], 1), r["params"],
+                   "Part A settings matched by edge counts (graphs built in another folder)" if r["inferred"] else None])
         ref = base_row.get((r["config"], r["seed"]))
         if ref and ref != i:
             ws.cell(row=i, column=heads.index(VS_BASE) + 1, value=f"={mae_letter}{i}/{mae_letter}{ref}-1")
@@ -124,7 +155,7 @@ def tuning_sheet(wb, runs):
         best = min(rows, key=lambda i: ws.cell(row=i, column=mae_col).value)
         ws.cell(row=best, column=mae_col).fill = BEST_FILL
         ws.cell(row=best, column=mae_col).font = BOLD
-    set_widths(ws, [14, 11, 6, 8, 9, 10, 9, 8, 8, 8, 9, 9, 9, 11, 11, 11, 11, 11, 11, 11, 11, 16, 8, 8, 8, 10, 30])
+    set_widths(ws, [14, 11, 6, 8, 9, 10, 9, 8, 8, 8, 9, 9, 9, 11, 11, 11, 11, 11, 11, 11, 11, 11, 11, 16, 8, 8, 8, 10, 30])
     ws.cell(row=len(runs) + 3, column=1,
             value="Green = lowest validation MAE for that config. Rank settings by validation only; "
                   "the test sheet is for the final chosen setting.").font = Font(italic=True)
@@ -134,8 +165,8 @@ def test_sheet(wb, runs, final_tags):
     ws = wb.create_sheet("Final test")
     heads = ["Tag", "Config", "Seed", "Hidden", "Dropout"]
     for metric in ("MAE", "RMSE", "MAPE %"):
-        heads += [f"Test {metric} {MINUTES[h]} min" for h in HORIZONS] + [f"Test {metric} mean"]
-    heads += ["Gate 15 min", "Gate 30 min", "Gate 60 min", "Parameters"]
+        heads += [f"Test {metric} {MINUTES[h]} min" for h in ALL_HORIZONS] + [f"Test {metric} mean"]
+    heads += ["Gate 15 min", "Gate 30 min", "Gate 60 min", "Parameters"]      # the 5-minute gate, when present, is in results.json
     ws.append(heads)
     style_header(ws, len(heads))
     ws.freeze_panes = "D2"
@@ -144,23 +175,23 @@ def test_sheet(wb, runs, final_tags):
         t = r["test"]
         line = [r["tag"], r["config"], r["seed"], r["hidden"], r["dropout"]]
         for metric in ("mae", "rmse", "mape"):
-            line += [t[h][metric] for h in HORIZONS] + [t["mean"][metric]]
+            line += [t[h][metric] if h in t else None for h in ALL_HORIZONS] + [t["mean"][metric]]
         line += [r["gate"].get(h) for h in HORIZONS] + [r["params"]]
         ws.append(line)
-    for row in ws.iter_rows(min_row=2, max_row=len(rows) + 1, min_col=6, max_col=20):
+    for row in ws.iter_rows(min_row=2, max_row=len(rows) + 1, min_col=6, max_col=len(heads) - 4):
         for cell in row:
             cell.number_format = "0.000"
     if not rows:
         ws.cell(row=3, column=1, value="Empty on purpose: fill with --final-tags <tag> once the setting is chosen on "
                                        "validation. Test numbers are read once, for the final setting only.").font = Font(italic=True)
-    set_widths(ws, [14, 11, 6, 8, 8] + [11] * 12 + [9, 9, 9, 10])
+    set_widths(ws, [14, 11, 6, 8, 8] + [11] * 15 + [9, 9, 9, 10])
 
 
 def comparison_sheet(wb):
     ws = wb.create_sheet("Comparison")
     heads = ["Model", "Code source", "Training recipe", "Epochs run", "Seeds", "Parameters", "Hardware / minutes",
-             "MAE 15 min", "MAE 30 min", "MAE 60 min", "RMSE 15 min", "RMSE 30 min", "RMSE 60 min",
-             "MAPE 15 min %", "MAPE 30 min %", "MAPE 60 min %", "Notes"]
+             "MAE 5 min", "MAE 15 min", "MAE 30 min", "MAE 60 min", "RMSE 5 min", "RMSE 15 min", "RMSE 30 min", "RMSE 60 min",
+             "MAPE 5 min %", "MAPE 15 min %", "MAPE 30 min %", "MAPE 60 min %", "Notes"]
     ws.append(heads)
     style_header(ws, len(heads))
     ws.freeze_panes = "B2"
@@ -169,7 +200,7 @@ def comparison_sheet(wb):
     ws.append([])
     ws.cell(row=ws.max_row + 1, column=1,
             value="One row per reference model: same PEMS-BAY split, same masked metrics, same seeds.").font = Font(italic=True)
-    set_widths(ws, [24, 26, 34, 10, 8, 11, 18] + [10] * 9 + [30])
+    set_widths(ws, [24, 26, 34, 10, 8, 11, 18] + [10] * 12 + [30])
 
 
 def rules_sheet(wb):
