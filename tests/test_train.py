@@ -59,6 +59,27 @@ def test_pipeline_end_to_end(tmp_path):
     assert "family" in summary and "paired RMSE ratio family / g12_all" in summary and "seed 1:" in summary
 
 
+def test_physical_and_semantic_branches(tmp_path):
+    """--physical --semantic: extra branches, per-branch gate values, equal parameter counts across configurations."""
+    data = tmp_path / "toy.npz"
+    make_dataset(data)
+    run("scripts/build_graphs.py", "--data", str(data), "--horizons", "3", "6", "12", "--out", str(tmp_path / "graphs"))
+    for config in ("family", "none"):
+        run("scripts/train.py", "--config", config, "--seed", "1", "--data", str(data), "--graphs", str(tmp_path / "graphs"),
+            "--results", str(tmp_path / "results"), "--epochs", "2", "--batch-size", "32", "--physical", "--semantic", "--semantic-top-k", "4")
+    fam = json.loads((tmp_path / "results" / "family_phys_sem__seed1" / "results.json").read_text())
+    none = json.loads((tmp_path / "results" / "none_nograph_phys_sem__seed1" / "results.json").read_text())
+    assert fam["branches"] == ["causal", "physical", "semantic"] and fam["parameters"] == none["parameters"]
+    for h in ("3", "6", "12"):
+        g = fam["test_gate_branches"][h]
+        assert set(g) == {"causal", "physical", "semantic"} and 0 < g["causal"] + g["physical"] + g["semantic"] <= 1
+        assert fam["test_gate"][h] == g["causal"] and none["test_gate_branches"][h]["causal"] == 0
+    history = (tmp_path / "results" / "family_phys_sem__seed1" / "history.csv").read_text().splitlines()[0]
+    assert "gate_physical_h3" in history and "gate_semantic_h12" in history
+    plain = json.loads((tmp_path / "results" / "family_phys_sem__seed1" / "config.json").read_text())["train"]["model"]
+    assert plain["physical"] and plain["semantic"] and plain["semantic_top_k"] == 4
+
+
 def test_five_minute_horizon(tmp_path):
     """Adding h=1: graphs, an extra branch and head, per-horizon results, and 'mean' still the mean over 15/30/60 min."""
     data = tmp_path / "toy.npz"

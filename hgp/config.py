@@ -51,8 +51,12 @@ class ModelConfig:
     horizon_embed: int = 8
     dropout: float = 0.1
     use_gate: bool = True
-    use_graph: bool = True
+    use_graph: bool = True        # the causal graph branch (False for --config none)
     two_hop: bool = False
+    physical: bool = False        # extra branch: road adjacency, shared by all horizons
+    semantic: bool = False        # extra branch: learned similarity graph over node embeddings, shared by all horizons
+    semantic_dim: int = 16        # node-embedding size of the semantic graph
+    semantic_top_k: int = 25      # sources kept per target in the semantic graph (matches --max-sources)
 
 
 @dataclass
@@ -71,5 +75,6 @@ class TrainConfig:
 
     def run_dir(self) -> Path:
         flags = "".join(f"_{f}" for f, on in (("nogate", not self.model.use_gate), ("nograph", not self.model.use_graph),
-                                              ("2hop", self.model.two_hop)) if on)
+                                              ("2hop", self.model.two_hop), ("phys", self.model.physical),
+                                              ("sem", self.model.semantic)) if on)
         return Path(self.results_dir) / f"{self.graph_config}{flags}__seed{self.seed}"

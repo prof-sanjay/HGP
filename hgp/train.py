@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 
 from .config import DataConfig, TrainConfig
 from .data import Data, Windows
-from .graphs.build import Assignment
+from .graphs.build import Assignment, row_normalise, to_sparse
 from .metrics import horizon_metrics, masked_mae
 from .model import HICP, count_parameters
 
@@ -32,7 +32,12 @@ class Trainer:
         seed_everything(config.seed)
         self.graphs = assignment.to_sparse(self.device)
         self.assignment = assignment
-        self.model = HICP(5, data_config.horizons, config.model).to(self.device)
+        self.physical = None
+        if config.model.physical:                                   # road adjacency, symmetric, no self-loops, row-normalised
+            road = (data.road != 0).astype(np.float32)
+            np.fill_diagonal(road, 0.0)
+            self.physical = to_sparse(row_normalise(road), self.device)
+        self.model = HICP(5, data_config.horizons, config.model, data.num_nodes).to(self.device)
         self.loaders = {}
         for split in (data.train, data.val, data.test):
             ds = Windows(split, data_config.seq_len, data_config.horizons)
@@ -59,7 +64,7 @@ class Trainer:
         total = count = 0
         for flow, tf, y, m, _ in self.loaders["train"]:
             flow, tf, y, m = (t.to(self.device) for t in (flow, tf, y, m))
-            pred, _ = self.model(flow, tf, self.graphs)
+            pred, _ = self.model(flow, tf, self.graphs, self.physical)
             loss = masked_mae(pred, y, m)
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
@@ -72,16 +77,16 @@ class Trainer:
 
     @torch.no_grad()
     def predict(self, name: str):
-        """Per horizon: targets and predictions in vehicles (observed windows only), window starts, mean gate."""
+        """Per horizon: targets and predictions in vehicles (observed windows only), window starts, mean gate weight per branch."""
         self.model.eval()
         H = self.dc.horizons
         targets, preds, starts = ({h: [] for h in H} for _ in range(3))
-        gate = {h: 0.0 for h in H}
+        gate = {h: {b: 0.0 for b in self.model.branches} for h in H}
         mean, std = (torch.as_tensor(v, device=self.device) for v in (self.data.mean, self.data.std))
         n = 0
         for flow, tf, y, m, s in self.loaders[name]:
             flow, tf, y = (t.to(self.device) for t in (flow, tf, y))
-            pred, g = self.model(flow, tf, self.graphs)
+            pred, g = self.model(flow, tf, self.graphs, self.physical)
             pred, y = pred * std + mean, y * std + mean
             for k, h in enumerate(H):
                 keep = m[:, k].numpy()
@@ -89,10 +94,11 @@ class Trainer:
                     preds[h].append(pred[keep, k].cpu().numpy())
                     targets[h].append(y[keep, k].cpu().numpy())
                     starts[h].append(s.numpy()[keep])
-                gate[h] += float(g[h]) * len(flow)
+                for b, v in g[h].items():
+                    gate[h][b] += float(v) * len(flow)
             n += len(flow)
         cat = lambda d: {h: np.concatenate(v) if v else np.zeros((0, self.data.num_nodes)) for h, v in d.items()}
-        return cat(targets), cat(preds), cat(starts), {h: v / max(n, 1) for h, v in gate.items()}
+        return cat(targets), cat(preds), cat(starts), {h: {b: v / max(n, 1) for b, v in g.items()} for h, g in gate.items()}
 
     def fit(self) -> dict:
         cfg = self.config
@@ -110,7 +116,8 @@ class Trainer:
                 val = horizon_metrics(targets, preds, self.dc.mape_min_flow)
                 row = {"epoch": epoch, "train_loss": train_loss, "val_mae": val["mean"]["mae"], "val_rmse": val["mean"]["rmse"],
                        **{f"val_mae_h{h}": val[h]["mae"] for h in self.dc.horizons},
-                       **{f"gate_h{h}": gate[h] for h in self.dc.horizons},
+                       **{f"gate_h{h}": gate[h]["causal"] for h in self.dc.horizons},
+                       **{f"gate_{b}_h{h}": gate[h][b] for b in self.model.branches[1:] for h in self.dc.horizons},
                        "lr": optimizer.param_groups[0]["lr"], "seconds": time.time() - t1}
                 writer = writer or csv.DictWriter(f, fieldnames=list(row))
                 if epoch == 1:
@@ -123,8 +130,9 @@ class Trainer:
                     torch.save(self.model.state_dict(), self.run_dir / "checkpoints" / "best.pt")
                 else:
                     bad += 1
+                shown = " ".join("/".join(f"{gate[h][b]:.2f}" for b in self.model.branches) for h in self.dc.horizons)
                 print(f"epoch {epoch:3d}  loss {train_loss:.4f}  val MAE {val['mean']['mae']:.3f}  "
-                      f"gate {' '.join(f'{gate[h]:.2f}' for h in self.dc.horizons)}  {row['seconds']:.0f}s{'  *' if improved else ''}", flush=True)
+                      f"gate {shown}  {row['seconds']:.0f}s{'  *' if improved else ''}", flush=True)
                 if bad >= cfg.patience:
                     break
 
@@ -133,7 +141,8 @@ class Trainer:
         test = horizon_metrics(targets, preds, self.dc.mape_min_flow)
         self._save_predictions(targets, preds, starts)
         results = {"run": self.run_dir.name, "parameters": count_parameters(self.model), "best_epoch": best["epoch"],
-                   "epochs": epoch, "validation": best["val"], "test": test, "test_gate": gate,
+                   "epochs": epoch, "validation": best["val"], "test": test, "test_gate": {h: g["causal"] for h, g in gate.items()},
+                   "branches": list(self.model.branches), "test_gate_branches": gate,
                    "training_seconds": time.time() - t0, "device": str(self.device)}
         self._json("results.json", results)
         print("test  " + "  ".join(f"h{h}: RMSE {test[h]['rmse']:.3f} MAE {test[h]['mae']:.3f}" for h in self.dc.horizons))

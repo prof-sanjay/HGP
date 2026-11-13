@@ -34,6 +34,10 @@ def main():
     ap.add_argument("--dropout", type=float, default=ModelConfig.dropout)
     ap.add_argument("--no-gate", action="store_true")
     ap.add_argument("--two-hop", action="store_true")
+    ap.add_argument("--physical", action="store_true", help="add a road-adjacency branch to every horizon")
+    ap.add_argument("--semantic", action="store_true", help="add a learned similarity-graph branch to every horizon")
+    ap.add_argument("--semantic-dim", type=int, default=ModelConfig.semantic_dim, help="node-embedding size of the semantic graph")
+    ap.add_argument("--semantic-top-k", type=int, default=ModelConfig.semantic_top_k, help="sources per target in the semantic graph")
     ap.add_argument("--max-windows", type=int, default=None, help="limit windows per split (smoke tests)")
     ap.add_argument("--device", default=None)
     args = ap.parse_args()
@@ -41,7 +45,9 @@ def main():
     dc = DataConfig.from_file(args.data)
     dc.horizons = tuple(args.horizons)
     tc = TrainConfig(graph_config=args.config, seed=args.seed, epochs=args.epochs, batch_size=args.batch_size, results_dir=args.results,
-                     model=ModelConfig(hidden=args.hidden, dropout=args.dropout, use_gate=not args.no_gate, use_graph=args.config != "none", two_hop=args.two_hop))
+                     model=ModelConfig(hidden=args.hidden, dropout=args.dropout, use_gate=not args.no_gate, use_graph=args.config != "none",
+                                       two_hop=args.two_hop, physical=args.physical, semantic=args.semantic,
+                                       semantic_dim=args.semantic_dim, semantic_top_k=args.semantic_top_k))
     data = load(dc)
     assignment = Assignment.build(args.config, dc.horizons, args.graphs, data.road, args.seed)
     trainer = Trainer(data, dc, tc, assignment, torch.device(args.device) if args.device else None, args.max_windows)

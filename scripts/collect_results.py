@@ -74,7 +74,7 @@ def collect(results_dir, include_smoke):
             graph_cfgs[tuple(sorted(edges.items()))] = graph_cfg
         uses_graph = model.get("use_graph", True)
         runs.append(dict(
-            tag=tag, folder=str(path.parent), config=train.get("graph_config", result["run"].split("__")[0]), seed=train.get("seed"),
+            tag=tag, folder=str(path.parent), config=result["run"].rsplit("__seed", 1)[0].replace("_nograph", ""), seed=train.get("seed"),
             graph_cfg=graph_cfg if uses_graph else {}, edges=edges if uses_graph else {}, inferred=False,
             hidden=model.get("hidden"), dropout=model.get("dropout"), params=result.get("parameters"),
             best_epoch=result.get("best_epoch"), epochs=result.get("epochs"),

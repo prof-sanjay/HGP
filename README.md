@@ -67,6 +67,8 @@ settings are exposed as options:
 | `--max-sources` | `build_graphs.py` | 25 | sources per target |
 | `--var-lag`, `--var-ridge` | `build_graphs.py` | 3, 10⁶ | road-restricted VAR (the ridge scales with the data) |
 | `--hidden`, `--dropout` | `train.py` | 64, 0.1 | temporal encoder width and dropout |
+| `--physical`, `--semantic` | `train.py` | off | extra propagation branches over the road graph / a learned similarity graph |
+| `--semantic-dim`, `--semantic-top-k` | `train.py` | 16, 25 | node-embedding size and sources per target of the semantic graph |
 
 Tune them on the validation split only.
 
@@ -91,6 +93,25 @@ python scripts/train.py --config none    --seed 42     # no graph: the per-node 
 `--no-gate` and `--two-hop` give the gate and depth ablations. Results go to `results/<config>__seed<seed>/`:
 `results.json` (per-horizon MAE, RMSE, masked MAPE on vehicles / 5 min; the mean gate value per horizon),
 `history.csv`, `checkpoints/best.pt` and `test_predictions_h{h}.npz`.
+
+### Extra graph branches: physical and semantic
+
+```
+python scripts/train.py --config family  --seed 42 --physical --semantic
+python scripts/train.py --config g12_all --seed 42 --physical --semantic
+python scripts/train.py --config none    --seed 42 --physical --semantic   # physical + semantic only: is the causal graph still needed?
+```
+
+`--physical` adds, in every horizon branch, one propagation step over the road adjacency (one graph for all horizons,
+separate weights per horizon). `--semantic` adds one over a learned similarity graph: two node-embedding tables
+E_t, E_s (`--semantic-dim`, default 16); A_sem[i, j] = softmax_j(E_t[i]·E_s[j] / √d) over the `--semantic-top-k`
+(default 25) most similar sources, no self-loops, trained with the model. The gate becomes a softmax over
+[self, causal, physical, semantic] per node and feature, with the self logit fixed at zero; a branch without a graph
+(the causal one under `--config none`) gets weight zero. With the causal branch alone this is exactly the sigmoid gate
+of HICP, so results and checkpoints of plain runs are unchanged. Run names carry the flags
+(`family_phys_sem__seed42`); `results.json` adds `branches` and `test_gate_branches` (mean weight per branch and
+horizon), `history.csv` adds `gate_physical_h*` and `gate_semantic_h*`. Parameter counts stay equal across `none`,
+`family` and `g12_all` within one flag setting (PEMS-BAY, hidden 128: 152,219 plain, 327,483 with both branches).
 
 ## Kaggle
 
