@@ -45,6 +45,7 @@ def main():
     ap.add_argument("--control", choices=["pool_var"], default=None,
                     help="pool_var: replace knockoff selection by the top VAR-effect pool members (same count per target)")
     ap.add_argument("--targets", type=int, default=None, help="only the first K targets (quick checks)")
+    ap.add_argument("--knockoff-seed", type=int, default=0, help="offset added to the per-target knockoff seed (0 = the published graphs)")
     args = ap.parse_args()
     dc = DataConfig.from_file(args.data)
     gc = GraphConfig(fdr=args.fdr, group_corr=args.group_corr, max_sources=args.max_sources, var_lag=args.var_lag,
@@ -76,7 +77,7 @@ def main():
             cand = np.flatnonzero(pool[i])
             if len(cand) == 0:
                 continue
-            res = knockoff_statistics(detrended, i, cand, h, train_end, gc, np.random.default_rng(1000 + int(i)))
+            res = knockoff_statistics(detrended, i, cand, h, train_end, gc, np.random.default_rng(1000 + args.knockoff_seed + int(i)))
             if res is None:
                 continue
             W_grp[i, cand], W_ind[i, cand], groups[i], gammas[i] = res
