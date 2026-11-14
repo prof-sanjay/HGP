@@ -1,7 +1,9 @@
 """
 Road-restricted ridge VAR and its impulse responses.
 
-    x_t = sum_{k=1}^{p} A_k x_{t-k} + e_t,   (A_k)[i, j] = 0 unless j is a road neighbour of i or j = i
+    x_t = sum_{k=1}^{p} A_k x_{t-k} + e_t,   (A_k)[i, j] = 0 unless support[i, j] != 0 or j = i
+
+support is the road matrix (one-hop neighbours; v1, v2) or the candidate pool (two undirected hops; v3, --var-support pool).
 
 Every target equation is fitted separately on the rows where the target and all its lagged predictors are
 observed; missing values are never filled.

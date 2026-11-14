@@ -47,10 +47,12 @@ def main():
     ap.add_argument("--targets", type=int, default=None, help="only the first K targets (quick checks)")
     ap.add_argument("--knockoff-seed", type=int, default=0, help="offset added to the per-target knockoff seed (0 = the published graphs)")
     ap.add_argument("--stride", type=int, default=GraphConfig.stride, help="row spacing of the knockoff statistic (3 = v1, 12 = v2: rows closer to independent)")
+    ap.add_argument("--var-support", choices=["road", "pool"], default=GraphConfig.var_support,
+                    help="sources of each VAR equation: road = one-hop road neighbours (v1/v2), pool = the two-hop candidate pool (v3)")
     args = ap.parse_args()
     dc = DataConfig.from_file(args.data)
     gc = GraphConfig(stride=args.stride, fdr=args.fdr, group_corr=args.group_corr, max_sources=args.max_sources, var_lag=args.var_lag,
-                     var_ridge=args.var_ridge, out_dir=args.out)
+                     var_ridge=args.var_ridge, var_support=args.var_support, out_dir=args.out)
     out = Path(gc.out_dir)
     out.mkdir(parents=True, exist_ok=True)
 
@@ -62,11 +64,11 @@ def main():
     targets = np.arange(N if args.targets is None else min(args.targets, N))
     t0 = time.time()
 
-    coef = fit_var(train, road, gc.var_lag, gc.var_ridge)
+    pool = candidate_pool(road)
+    coef = fit_var(train, pool if gc.var_support == "pool" else road, gc.var_lag, gc.var_ridge)
     psi = impulse_responses(coef, args.horizons)
     sigma = np.nanstd(train, axis=0)
     sigma[sigma == 0] = 1.0
-    pool = candidate_pool(road)
     detrended = detrend(flow, train_end)
     print(f"VAR fitted ({time.time() - t0:.0f}s); pool {pool.sum(1).mean():.1f} candidates per target", flush=True)
 

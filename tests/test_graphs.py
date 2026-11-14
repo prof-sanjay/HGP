@@ -93,3 +93,15 @@ def test_assemble_weights_and_assignments(tmp_path):
     assert Assignment.build("none", (3, 6, 12), tmp_path).graphs[3] is None
     normalised = row_normalise(g)
     assert np.allclose(normalised.sum(1)[(g > 0).any(1)], 1.0)
+
+
+def test_fit_var_support_can_be_the_wider_pool():
+    rng = np.random.default_rng(0)
+    x = rng.standard_normal((3000, 6))
+    for t in range(1, 3000):
+        x[t, 0] += 0.5 * x[t - 1, 2]                          # source 2 reaches target 0; it is two hops away on the road
+    road = np.zeros((6, 6)); road[0, 1] = road[1, 2] = 1.0
+    narrow = fit_var(x, road, lag=1, ridge=1e-3)
+    wide = fit_var(x, candidate_pool(road), lag=1, ridge=1e-3)
+    assert narrow[0, 0, 2] == 0.0 and abs(wide[0, 0, 2] - 0.5) < 0.05     # only the pool support can see the two-hop source
+    assert (wide[0][~(candidate_pool(road) | np.eye(6, dtype=bool))] == 0).all()

@@ -34,6 +34,7 @@ class GraphConfig:
     """Part A: restricted VAR, impulse responses, knockoff selection, graph assembly."""
     var_lag: int = 3
     var_ridge: float = 1e6
+    var_support: str = "road"  # "road": VAR sources = one-hop road neighbours (v1, v2); "pool": VAR sources = the whole candidate pool (v3)
     stride: int = 3            # one row every 15 minutes for the knockoff statistic
     self_lags: int = 3
     shrink: float = 0.01       # ridge shrinkage of the candidate correlation matrix
