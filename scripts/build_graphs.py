@@ -46,9 +46,10 @@ def main():
                     help="pool_var: replace knockoff selection by the top VAR-effect pool members (same count per target)")
     ap.add_argument("--targets", type=int, default=None, help="only the first K targets (quick checks)")
     ap.add_argument("--knockoff-seed", type=int, default=0, help="offset added to the per-target knockoff seed (0 = the published graphs)")
+    ap.add_argument("--stride", type=int, default=GraphConfig.stride, help="row spacing of the knockoff statistic (3 = v1, 12 = v2: rows closer to independent)")
     args = ap.parse_args()
     dc = DataConfig.from_file(args.data)
-    gc = GraphConfig(fdr=args.fdr, group_corr=args.group_corr, max_sources=args.max_sources, var_lag=args.var_lag,
+    gc = GraphConfig(stride=args.stride, fdr=args.fdr, group_corr=args.group_corr, max_sources=args.max_sources, var_lag=args.var_lag,
                      var_ridge=args.var_ridge, out_dir=args.out)
     out = Path(gc.out_dir)
     out.mkdir(parents=True, exist_ok=True)
