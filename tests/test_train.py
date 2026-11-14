@@ -80,6 +80,23 @@ def test_physical_and_semantic_branches(tmp_path):
     assert plain["physical"] and plain["semantic"] and plain["semantic_top_k"] == 4
 
 
+def test_pool_var_control(tmp_path):
+    """--control pool_var: same pool and per-target source counts as knockoff, no knockoff test, usable by `family`."""
+    from hgp.graphs import candidate_pool
+    data = tmp_path / "toy.npz"
+    make_dataset(data, days=40)      # enough rows for the knockoff statistic (min_rows 2000 at stride 3)
+    run("scripts/build_graphs.py", "--data", str(data), "--horizons", "3", "6", "--control", "pool_var", "--out", str(tmp_path / "graphs"))
+    pool = candidate_pool(np.load(data)["road"])
+    for h in (3, 6):
+        ko = np.load(tmp_path / "graphs" / f"KO_G_h{h}.npz")["adjacency"] > 0
+        ctrl = np.load(tmp_path / "graphs" / f"G_h{h}.npz")["adjacency"] > 0
+        assert np.array_equal(ko.sum(1), ctrl.sum(1)) and not (ctrl & ~pool).any() and ctrl.any()
+        assert json.loads((tmp_path / "graphs" / f"G_h{h}.json").read_text())["control"] == "pool_var"
+    run("scripts/train.py", "--config", "family", "--seed", "1", "--data", str(data), "--graphs", str(tmp_path / "graphs"),
+        "--results", str(tmp_path / "results"), "--epochs", "1", "--batch-size", "32", "--horizons", "3", "6")
+    assert (tmp_path / "results" / "family__seed1" / "results.json").exists()
+
+
 def test_lstm_baseline(tmp_path):
     """--config lstm: per-sensor LSTM, no graphs needed, same outputs and result layout, sensors never mix."""
     import torch

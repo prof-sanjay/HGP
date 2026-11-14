@@ -7,6 +7,12 @@ For every horizon h this writes
     graphs/G_h{h}.npz      the HGP graph (knockoff-selected edges, VAR / partial-correlation weights)
     graphs/VAR_h{h}.npz    the VAR-only reference graph (top-25 by |Psi_h|)
     graphs/knockoff_h{h}.npz   statistics of every target, for inspection and reproducibility
+
+Control (Part A ablation):  --control pool_var
+    Same candidate pool, same VAR / partial-correlation weights, same number of sources per target as the knockoff
+    selection, but the sources are the pool members with the largest standardised VAR effect (no knockoff test).
+    G_h{h}.npz then holds this control graph and KO_G_h{h}.npz the real knockoff graph, so
+    "family with --graphs <this folder>" runs the control with no change to training.
 """
 
 import argparse
@@ -36,6 +42,8 @@ def main():
     ap.add_argument("--var-lag", type=int, default=GraphConfig.var_lag)
     ap.add_argument("--var-ridge", type=float, default=GraphConfig.var_ridge)
     ap.add_argument("--out", default=GraphConfig.out_dir)
+    ap.add_argument("--control", choices=["pool_var"], default=None,
+                    help="pool_var: replace knockoff selection by the top VAR-effect pool members (same count per target)")
     ap.add_argument("--targets", type=int, default=None, help="only the first K targets (quick checks)")
     args = ap.parse_args()
     dc = DataConfig.from_file(args.data)
@@ -87,6 +95,16 @@ def main():
         effect = standardised_effect(psi[h], sigma)
         reference = var_top_k(psi[h], gc.max_sources)
         graph, info = assemble(selected, effect, rho, reference)
+        if args.control == "pool_var":
+            save_graph(out / f"KO_G_h{h}.npz", graph, sensors, h, train_end, fdr=gc.fdr)
+            ctrl = np.zeros_like(selected)
+            for i in range(N):
+                k, cand = int(selected[i].sum()), np.flatnonzero(pool[i])
+                if k:
+                    ctrl[i, cand[np.lexsort((-rho[i, cand], -effect[i, cand]))[:k]]] = True
+            graph, info = assemble(ctrl, effect, rho, reference)
+            info["control"] = "pool_var"
+            info["overlap_with_knockoff"] = int((ctrl & selected).sum())
         info.update(horizon=h, targets_done=len(groups), seconds=time.time() - t1, graph_config=asdict(gc))
         save_graph(out / f"G_h{h}.npz", graph, sensors, h, train_end, fdr=gc.fdr)
         save_graph(out / f"VAR_h{h}.npz", reference, sensors, h, train_end)
