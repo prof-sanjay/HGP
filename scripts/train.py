@@ -30,6 +30,7 @@ def main():
     ap.add_argument("--graphs", default="graphs")
     ap.add_argument("--results", default="results")
     ap.add_argument("--epochs", type=int, default=TrainConfig.epochs)
+    ap.add_argument("--patience", type=int, default=TrainConfig.patience, help="epochs without a better validation MAE before stopping; use a value >= --epochs to train the full schedule")
     ap.add_argument("--batch-size", type=int, default=TrainConfig.batch_size)
     ap.add_argument("--hidden", type=int, default=ModelConfig.hidden)
     ap.add_argument("--dropout", type=float, default=ModelConfig.dropout)
@@ -46,7 +47,7 @@ def main():
 
     dc = DataConfig.from_file(args.data)
     dc.horizons = tuple(args.horizons)
-    tc = TrainConfig(graph_config=args.config, seed=args.seed, epochs=args.epochs, batch_size=args.batch_size, results_dir=args.results,
+    tc = TrainConfig(graph_config=args.config, seed=args.seed, epochs=args.epochs, patience=args.patience, batch_size=args.batch_size, results_dir=args.results,
                      model=ModelConfig(hidden=args.hidden, dropout=args.dropout, use_gate=not args.no_gate, use_graph=args.config not in ("none", "lstm"),
                                        two_hop=args.two_hop, physical=args.physical, semantic=args.semantic,
                                        semantic_dim=args.semantic_dim, semantic_top_k=args.semantic_top_k,
