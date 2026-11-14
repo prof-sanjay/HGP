@@ -80,6 +80,26 @@ def test_physical_and_semantic_branches(tmp_path):
     assert plain["physical"] and plain["semantic"] and plain["semantic_top_k"] == 4
 
 
+def test_lstm_baseline(tmp_path):
+    """--config lstm: per-sensor LSTM, no graphs needed, same outputs and result layout, sensors never mix."""
+    import torch
+    from hgp.config import ModelConfig
+    from hgp.model import SensorLSTM
+    data = tmp_path / "toy.npz"
+    make_dataset(data)
+    run("scripts/train.py", "--config", "lstm", "--seed", "1", "--data", str(data), "--results", str(tmp_path / "results"),
+        "--epochs", "2", "--batch-size", "32", "--horizons", "1", "3", "6", "12")
+    r = json.loads((tmp_path / "results" / "lstm__seed1" / "results.json").read_text())
+    assert set(r["test"]) >= {"1", "3", "6", "12", "mean"} and r["branches"] == ["causal"] and r["parameters"] > 0
+    model = SensorLSTM(5, (3, 12), ModelConfig(hidden=8, layers=2)).eval()
+    flow, tf = torch.randn(2, 12, 5), torch.randn(2, 12, 4)
+    base, _ = model(flow, tf)
+    flow2 = flow.clone()
+    flow2[:, :, 0] += 5.0                                   # change one sensor: every other sensor's forecast is unchanged
+    moved, _ = model(flow2, tf)
+    assert base.shape == (2, 2, 5) and torch.allclose(base[:, :, 1:], moved[:, :, 1:], atol=1e-6) and not torch.allclose(base[:, :, 0], moved[:, :, 0])
+
+
 def test_five_minute_horizon(tmp_path):
     """Adding h=1: graphs, an extra branch and head, per-horizon results, and 'mean' still the mean over 15/30/60 min."""
     data = tmp_path / "toy.npz"

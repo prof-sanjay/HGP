@@ -57,6 +57,8 @@ class ModelConfig:
     semantic: bool = False        # extra branch: learned similarity graph over node embeddings, shared by all horizons
     semantic_dim: int = 16        # node-embedding size of the semantic graph
     semantic_top_k: int = 25      # sources kept per target in the semantic graph (matches --max-sources)
+    arch: str = "hicp"            # "lstm": per-sensor LSTM baseline (no graph, no gate)
+    layers: int = 2               # LSTM baseline only
 
 
 @dataclass
@@ -74,7 +76,8 @@ class TrainConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
 
     def run_dir(self) -> Path:
-        flags = "".join(f"_{f}" for f, on in (("nogate", not self.model.use_gate), ("nograph", not self.model.use_graph),
+        lstm = self.model.arch == "lstm"
+        flags = "".join(f"_{f}" for f, on in (("nogate", not self.model.use_gate and not lstm), ("nograph", not self.model.use_graph and not lstm),
                                               ("2hop", self.model.two_hop), ("phys", self.model.physical),
                                               ("sem", self.model.semantic)) if on)
-        return Path(self.results_dir) / f"{self.graph_config}{flags}__seed{self.seed}"
+        return Path(self.results_dir) / f"{'lstm' if lstm else self.graph_config}{flags}__seed{self.seed}"

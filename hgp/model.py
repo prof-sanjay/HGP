@@ -154,5 +154,30 @@ class HICP(nn.Module):
         return torch.stack(preds, 1), gates
 
 
+class SensorLSTM(nn.Module):
+    """Baseline: one LSTM shared by all sensors, each sensor sees only its own 12-step history (flow + time features).
+
+    No road graph, no causal graph, no gate. Same inputs, targets, horizons and loss as HICP; one linear head per horizon
+    on the last hidden state of the top layer, so all horizons come out of one forward pass.
+    """
+
+    def __init__(self, num_features: int, horizons: tuple[int, ...], config: ModelConfig):
+        super().__init__()
+        self.horizons = tuple(horizons)
+        self.branches = ["causal"]
+        self.lstm = nn.LSTM(num_features, config.hidden, config.layers, batch_first=True,
+                            dropout=config.dropout if config.layers > 1 else 0.0)
+        self.dropout = nn.Dropout(config.dropout)
+        self.heads = nn.ModuleList([nn.Linear(config.hidden, 1) for _ in horizons])
+
+    def forward(self, flow: torch.Tensor, time_feat: torch.Tensor, graphs=None, physical=None):
+        B, T, N = flow.shape
+        x = torch.cat([flow.unsqueeze(-1), time_feat.unsqueeze(2).expand(B, T, N, -1)], -1)
+        out, _ = self.lstm(x.permute(0, 2, 1, 3).reshape(B * N, T, -1))
+        Z = self.dropout(out[:, -1]).reshape(B, N, -1)
+        preds = torch.stack([head(Z).squeeze(-1) for head in self.heads], 1)
+        return preds, {h: {"causal": Z.new_zeros(())} for h in self.horizons}
+
+
 def count_parameters(model: nn.Module) -> int:
     return sum(p.numel() for p in model.parameters())

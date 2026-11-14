@@ -13,7 +13,7 @@ from .config import DataConfig, TrainConfig
 from .data import Data, Windows
 from .graphs.build import Assignment, row_normalise, to_sparse
 from .metrics import horizon_metrics, masked_mae
-from .model import HICP, count_parameters
+from .model import HICP, SensorLSTM, count_parameters
 
 
 def seed_everything(seed: int) -> None:
@@ -37,7 +37,8 @@ class Trainer:
             road = (data.road != 0).astype(np.float32)
             np.fill_diagonal(road, 0.0)
             self.physical = to_sparse(row_normalise(road), self.device)
-        self.model = HICP(5, data_config.horizons, config.model, data.num_nodes).to(self.device)
+        self.model = (SensorLSTM(5, data_config.horizons, config.model) if config.model.arch == "lstm"
+                      else HICP(5, data_config.horizons, config.model, data.num_nodes)).to(self.device)
         self.loaders = {}
         for split in (data.train, data.val, data.test):
             ds = Windows(split, data_config.seq_len, data_config.horizons)
